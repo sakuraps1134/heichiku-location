@@ -1,0 +1,37 @@
+name: Fetch Train Location Data
+
+on:
+  schedule:
+    # 10分ごとに自動実行 (UTC表記)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # GitHub画面から手動実行も可能にする設定
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # リポジトリへの書き込み（コミット・プッシュ）権限
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests
+
+      - name: Run Fetch Script
+        run: |
+          python fetch.py
+
+      - name: Commit and Push Updated JSON
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add train_history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update train position data" && git push)
