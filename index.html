@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>平成筑豊鉄道 車両位置履歴マップ</title>
+  
+  <!-- Leaflet (地図ライブラリ) のCSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #header {
+      background: #1e293b;
+      color: white;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      z-index: 1000;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    select {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #334155;
+      color: white;
+      font-size: 0.95rem;
+      outline: none;
+      cursor: pointer;
+    }
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+    .custom-popup {
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="header">
+    <h1>平成筑豊鉄道 位置履歴</h1>
+    <label for="car-select">車両選択:</label>
+    <select id="car-select">
+      <option value="ALL">すべての車両を表示</option>
+    </select>
+  </div>
+
+  <div id="map"></div>
+
+  <!-- Leaflet (地図ライブラリ) のJS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // 平成筑豊鉄道沿線の中心（金田駅付近）に初期表示をセット
+    const map = L.map('map').setView([33.68, 130.82], 11);
+
+    // 国土地理院マップ（標準地図）を表示
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+      attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+    }).addTo(map);
+
+    let allData = [];
+    let layerGroup = L.layerGroup().addTo(map);
+
+    // 車両ごとの色定義
+    const CAR_COLORS = {
+      '410': '#e11d48',
+      '405': '#2563eb',
+      '501': '#16a34a',
+      '404': '#d97706',
+      '408': '#9333ea',
+      '409': '#0891b2'
+    };
+
+    function getColor(carNo) {
+      return CAR_COLORS[carNo] || '#475569';
+    }
+
+    // JSONデータの取得と描画
+    fetch('./train_history.json')
+      .then(response => {
+        if (!response.ok) throw new Error('JSONの読み込みに失敗しました');
+        return response.json();
+      })
+      .then(data => {
+        allData = data;
+        initCarSelect(data);
+        renderMap('ALL');
+      })
+      .catch(error => {
+        alert('データ読み込みエラー: ' + error.message);
+      });
+
+    // 車両選択ドロップダウンの初期化
+    function initCarSelect(data) {
+      const carSelect = document.getElementById('car-select');
+      const cars = [...new Set(data.map(item => item.carNo))].sort();
+
+      cars.forEach(carNo => {
+        const option = document.createElement('option');
+        option.value = carNo;
+        option.textContent = `車両 ${carNo}`;
+        carSelect.appendChild(option);
+      });
+
+      carSelect.addEventListener('change', (e) => {
+        renderMap(e.target.value);
+      });
+    }
+
+    // マップへの描画処理
+    function renderMap(selectedCar) {
+      layerGroup.clearLayers();
+
+      // 車両ごとにグループ化
+      const groupedByCar = {};
+      allData.forEach(item => {
+        if (selectedCar !== 'ALL' && item.carNo !== selectedCar) return;
+        if (!groupedByCar[item.carNo]) groupedByCar[item.carNo] = [];
+        groupedByCar[item.carNo].push(item);
+      });
+
+      // 車両ごとに軌跡線とマーカーを描画
+      Object.keys(groupedByCar).forEach(carNo => {
+        const records = groupedByCar[carNo];
+        const color = getColor(carNo);
+
+        // 時系列でソート
+        records.sort((a, b) => new Date(a.gpsTime) - new Date(b.gpsTime));
+
+        // 走行軌跡（ポリライン）の追加
+        const latLngs = records.map(r => [r.lat, r.lng]);
+        if (latLngs.length > 1) {
+          L.polyline(latLngs, {
+            color: color,
+            weight: 4,
+            opacity: 0.7,
+            dashArray: '5, 10'
+          }).addTo(layerGroup);
+        }
+
+        // 各測位ポイントのマーカー追加
+        records.forEach((r, index) => {
+          const isLatest = index === records.length - 1;
+          
+          // ピンのマーカーを作成
+          const marker = L.circleMarker([r.lat, r.lng], {
+            radius: isLatest ? 8 : 5,
+            fillColor: color,
+            color: '#ffffff',
+            weight: isLatest ? 2 : 1,
+            opacity: 1,
+            fillOpacity: isLatest ? 1 : 0.6
+          });
+
+          // ポップアップ情報
+          marker.bindPopup(`
+            <div class="custom-popup">
+              <strong>車両番号: ${r.carNo}</strong> (${r.loginId})<br>
+              <strong>GPS時刻:</strong> ${r.gpsTime}<br>
+              <strong>取得日時:</strong> ${new Date(r.fetchedAt).toLocaleString('ja-JP')}<br>
+              <strong>座標:</strong> ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}
+            </div>
+          `);
+
+          marker.addTo(layerGroup);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
